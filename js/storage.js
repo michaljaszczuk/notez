@@ -1,8 +1,8 @@
-// storage.js - Make sure functions like getAllData, addNotebook, updatePage are defined here
-// And that they use the same ALL_DATA_KEY_LOCAL as background.js
+// js/storage.js
 
 const ALL_DATA_KEY_LOCAL = 'allNotesDataLocal'; // Key for chrome.storage.local
 
+// --- Core Data Functions ---
 async function getAllData() {
   return new Promise((resolve) => {
     chrome.storage.local.get(ALL_DATA_KEY_LOCAL, (result) => {
@@ -18,7 +18,8 @@ async function saveData(data) {
         console.error("Storage.local save error:", chrome.runtime.lastError.message);
         return reject(chrome.runtime.lastError);
       }
-      // Background script should pick this up for syncing
+      // The background script (background.js) will pick up this change
+      // and can then sync it with chrome.storage.sync if needed.
       resolve();
     });
   });
@@ -28,6 +29,7 @@ function generateId() {
     return `id_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
+// --- Notebook Functions ---
 async function addNotebook(name) {
   const data = await getAllData();
   const id = generateId();
@@ -36,6 +38,45 @@ async function addNotebook(name) {
   return data.notebooks[id];
 }
 
+async function getNotebook(notebookId) {
+  const data = await getAllData();
+  return data.notebooks[notebookId];
+}
+
+async function updateNotebook(notebookId, name) {
+  const data = await getAllData();
+  if (!data.notebooks[notebookId]) {
+    throw new Error("Notebook not found for update");
+  }
+  data.notebooks[notebookId].name = name;
+  data.notebooks[notebookId].updatedAt = Date.now(); // Optional: track updates
+  await saveData(data);
+  return data.notebooks[notebookId];
+}
+
+async function deleteNotebook(notebookId) {
+  const data = await getAllData();
+  if (!data.notebooks[notebookId]) {
+    console.warn(`Notebook ${notebookId} not found for deletion.`);
+    return false; // Or throw new Error("Notebook not found");
+  }
+
+  // Find and delete all sections (and their pages) belonging to this notebook
+  const sectionsToDelete = Object.values(data.sections).filter(
+    (section) => section.notebookId === notebookId
+  );
+
+  for (const section of sectionsToDelete) {
+    await deleteSection(section.id, data); // Pass data to avoid multiple reads
+  }
+
+  delete data.notebooks[notebookId];
+  await saveData(data);
+  console.log(`Notebook ${notebookId} and its contents deleted.`);
+  return true;
+}
+
+// --- Section Functions ---
 async function addSection(notebookId, name) {
   const data = await getAllData();
   if (!data.notebooks[notebookId]) throw new Error("Notebook not found");
@@ -45,6 +86,48 @@ async function addSection(notebookId, name) {
   return data.sections[id];
 }
 
+async function getSection(sectionId) {
+  const data = await getAllData();
+  return data.sections[sectionId];
+}
+
+async function updateSection(sectionId, name) {
+  const data = await getAllData();
+  if (!data.sections[sectionId]) {
+    throw new Error("Section not found for update");
+  }
+  data.sections[sectionId].name = name;
+  data.sections[sectionId].updatedAt = Date.now(); // Optional: track updates
+  await saveData(data);
+  return data.sections[sectionId];
+}
+
+// internalDeleteSection can be called by deleteNotebook to avoid multiple saveData calls if preferred
+async function deleteSection(sectionId, existingData = null) {
+  const data = existingData || await getAllData();
+  if (!data.sections[sectionId]) {
+    console.warn(`Section ${sectionId} not found for deletion.`);
+    return false; // Or throw new Error("Section not found");
+  }
+
+  // Find and delete all pages belonging to this section
+  const pagesToDelete = Object.values(data.pages).filter(
+    (page) => page.sectionId === sectionId
+  );
+
+  for (const page of pagesToDelete) {
+    delete data.pages[page.id]; // Directly delete from the data object
+  }
+
+  delete data.sections[sectionId];
+  if (!existingData) { // Only save if this is the primary call, not a nested one
+    await saveData(data);
+  }
+  console.log(`Section ${sectionId} and its pages deleted.`);
+  return true;
+}
+
+// --- Page Functions ---
 async function addPage(sectionId, title, content = "") {
   const data = await getAllData();
   if (!data.sections[sectionId]) throw new Error("Section not found");
@@ -63,12 +146,10 @@ async function getPage(pageId) {
 async function updatePage(pageId, title, content) {
   const data = await getAllData();
   if (!data.pages[pageId]) {
-    // Option: Create page if it doesn't exist (e.g. for a new note)
-    // This requires knowing its sectionId. For now, we assume it exists.
-    console.warn(`Page ${pageId} not found for update. Consider creating it or handling this case.`);
-    // If we want to create it, we need sectionId.
-    // Let's assume for this example it must exist.
-    throw new Error("Page not found for update");
+    // This was the previous behavior. Depending on UX, might want to create it
+    // or ensure it's always created before calling update.
+    console.warn(`Page ${pageId} not found for update. It will not be created.`);
+    throw new Error("Page not found for update. Cannot update non-existent page.");
   }
   data.pages[pageId] = {
     ...data.pages[pageId],
@@ -79,4 +160,28 @@ async function updatePage(pageId, title, content) {
   await saveData(data);
   return data.pages[pageId];
 }
-// Add delete functions etc.
+
+async function deletePage(pageId, existingData = null) {
+  const data = existingData || await getAllData();
+  if (!data.pages[pageId]) {
+    console.warn(`Page ${pageId} not found for deletion.`);
+    return false; // Or throw new Error("Page not found");
+  }
+  delete data.pages[pageId];
+  if (!existingData) { // Only save if this is the primary call
+    await saveData(data);
+  }
+  console.log(`Page ${pageId} deleted.`);
+  return true;
+}
+
+// --- Utility/Listing Functions (Optional but often useful) ---
+async function getSectionsByNotebook(notebookId) {
+  const data = await getAllData();
+  return Object.values(data.sections).filter(section => section.notebookId === notebookId);
+}
+
+async function getPagesBySection(sectionId) {
+  const data = await getAllData();
+  return Object.values(data.pages).filter(page => page.sectionId === sectionId);
+}
