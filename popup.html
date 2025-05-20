@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>My Notes</title>
+    <link rel="stylesheet" href="css/popup.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>My Notes</h1>
+            <button id="toggle-dark-mode">Toggle Dark Mode</button>
+            <input type="text" id="search-input" placeholder="Search notes...">
+        </header>
+
+        <div class="main-content">
+            <aside class="sidebar" id="sidebar">
+                <h2>Notebooks</h2>
+                <ul id="notebook-list">
+                </ul>
+                <button id="add-notebook-btn">+ New Notebook</button>
+            </aside>
+
+            <main class="editor-area">
+                <div class="editor-toolbar">
+                    <button data-command="bold"><b>B</b></button>
+                    <button data-command="italic"><i>I</i></button>
+                    <button data-command="insertUnorderedList">UL</button>
+                </div>
+                <div id="note-editor" contenteditable="true" class="note-content">
+                    <p>Select or create a page to start typing...</p>
+                </div>
+                <input type="text" id="note-title-input" placeholder="Note Title">
+                <button id="save-note-btn">Save Note</button>
+            </main>
+        </div>
+    </div>
+    <script src="js/storage.js"></script>
+    <script src="js/popup.js"></script>
+    <script src="js/background.js"></script>
+</body>
+
+</html>
