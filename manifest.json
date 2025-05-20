@@ -1,24 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "My Vanilla Notes",
+  "name": "Notez",
   "version": "0.1.0",
-  "description": "A lightweight note-taking extension with Vanilla JS.",
+  "description": "A lightweight note-taking extension",
   "permissions": ["storage"],
   "action": {
-    "default_popup": "popup.html",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "32": "icons/icon32.png",
-      "48": "icons/icon48.png"
-    }
+    "default_popup": "popup.html"
+
   },
   "background": {
     "service_worker": "js/background.js"
-  },
-  "icons": {
-    "16": "icons/icon16.png",
-    "32": "icons/icon32.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
   }
+
 }
