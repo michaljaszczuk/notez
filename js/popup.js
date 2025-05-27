@@ -21,6 +21,8 @@ let currentOpenPageId = null;
 let currentSelectedNotebookId = null;
 let currentSelectedSectionId = null;
 let lastSearchQuery = "";
+let expandedNotebooks = new Set(); // To track expanded notebooks
+let expandedSections = new Set();  // To track expanded sections
 
 // --- Rich Text Editor Controls ---
 editorToolbar.addEventListener('click', (e) => {
@@ -99,37 +101,57 @@ function renderSidebar(searchQuery = "") {
         notebookNameSpan.classList.add('item-name');
         notebookNameSpan.addEventListener('click', (e) => {
             e.stopPropagation();
-            currentSelectedNotebookId = notebook.id;
-            currentSelectedSectionId = null; // Reset section selection
-            // currentOpenPageId = null; // Optionally reset page
-            // clearEditor();
-            renderSidebar(lastSearchQuery);
-            // Try to load first page of first section or indicate to create one
-            const sections = getSectionsByNotebookLocal(notebook.id);
-            if (sections.length > 0) {
-                const firstSection = sections[0];
-                const pages = getPagesBySectionLocal(firstSection.id);
-                if (pages.length > 0) {
-                    loadPageIntoEditor(pages[0].id);
-                } else {
-                    setEditorPlaceholder(`No pages in section "${firstSection.name}". Click "+ New Page" in section controls.`);
-                }
+            if (expandedNotebooks.has(notebook.id)) {
+                expandedNotebooks.delete(notebook.id);
+                 // Optional: If collapsing, decide if sections within it should also be marked as collapsed
+                // getSectionsByNotebookLocal(notebook.id).forEach(sec => expandedSections.delete(sec.id));
             } else {
-                 setEditorPlaceholder(`No sections in notebook "${notebook.name}". Click "+ New Section".`);
+                expandedNotebooks.add(notebook.id);
+            }
+            currentSelectedNotebookId = notebook.id;
+            // currentSelectedSectionId = null; // Keep section selected if within this notebook
+
+            renderSidebar(lastSearchQuery);
+
+            // If notebook was expanded, and no relevant page is open, try to load first page
+            if (expandedNotebooks.has(notebook.id)) {
+                const sections = getSectionsByNotebookLocal(notebook.id).sort((a, b) => a.name.localeCompare(b.name));
+                if (sections.length > 0) {
+                    const firstSection = sections[0];
+                    // Optionally auto-expand the first section
+                    // expandedSections.add(firstSection.id);
+                    const pages = getPagesBySectionLocal(firstSection.id).sort((a, b) => a.title.localeCompare(b.title));
+                    if (pages.length > 0) {
+                        // Load first page only if no page is open or current page is not in this notebook.
+                        if (!currentOpenPageId || !appData.pages[currentOpenPageId] || appData.sections[appData.pages[currentOpenPageId].sectionId].notebookId !== notebook.id) {
+                            loadPageIntoEditor(pages[0].id);
+                        }
+                    } else if (!currentOpenPageId || !appData.pages[currentOpenPageId] || appData.sections[appData.pages[currentOpenPageId].sectionId].notebookId !== notebook.id) {
+                        // No pages in the first section, set placeholder if editor should change
+                        setEditorPlaceholder(`No pages in section "${firstSection.name}". Click "+ New Page".`);
+                    }
+                } else if (!currentOpenPageId || !appData.pages[currentOpenPageId] || appData.sections[appData.pages[currentOpenPageId].sectionId].notebookId !== notebook.id) {
+                    // No sections in the notebook, set placeholder if editor should change
+                     setEditorPlaceholder(`No sections in notebook "${notebook.name}". Click "+ New Section".`);
+                }
             }
         });
 
         const notebookControls = document.createElement('div');
         notebookControls.classList.add('item-controls');
 
-        const addSectionBtn = createIconButton('+', 'Add Section', async (e) => {
+        const addSectionBtn = createIconButton('&#43;', 'Add Section', async (e) => {
             e.stopPropagation();
+            currentSelectedNotebookId = notebook.id; // Ensure this notebook is context
+            expandedNotebooks.add(notebook.id);   // Ensure notebook is expanded
+
             const sectionName = prompt(`Enter name for new section in "${notebook.name}":`);
             if (sectionName) {
                 try {
                     const newSection = await addSection(notebook.id, sectionName);
                     appData.sections[newSection.id] = newSection;
                     currentSelectedSectionId = newSection.id; // Select new section
+                    expandedSections.add(newSection.id); // Expand new section
                     renderSidebar(lastSearchQuery);
                     setEditorPlaceholder(`No pages in new section "${newSection.name}". Click "+ New Page".`);
                 } catch (error) {
@@ -139,7 +161,7 @@ function renderSidebar(searchQuery = "") {
             }
         });
 
-        const renameNotebookBtn = createIconButton('✎', 'Rename Notebook', async (e) => {
+        const renameNotebookBtn = createIconButton('&#9998;', 'Rename Notebook', async (e) => {
             e.stopPropagation();
             const newName = prompt("Enter new notebook name:", notebook.name);
             if (newName && newName !== notebook.name) {
@@ -154,19 +176,22 @@ function renderSidebar(searchQuery = "") {
             }
         });
 
-        const deleteNotebookBtn = createIconButton('🗑', 'Delete Notebook', async (e) => {
+        const deleteNotebookBtn = createIconButton('&#128465;', 'Delete Notebook', async (e) => {
             e.stopPropagation();
             if (confirm(`Are you sure you want to delete notebook "${notebook.name}" and all its contents?`)) {
+                const notebookIdToDelete = notebook.id;
                 try {
-                    await deleteNotebook(notebook.id);
-                    delete appData.notebooks[notebook.id];
+                    await deleteNotebook(notebookIdToDelete);
+                    delete appData.notebooks[notebookIdToDelete];
                     // Cascade delete local appData sections and pages
-                    getSectionsByNotebookLocal(notebook.id).forEach(sec => {
+                    getSectionsByNotebookLocal(notebookIdToDelete).forEach(sec => {
                         getPagesBySectionLocal(sec.id).forEach(p => delete appData.pages[p.id]);
                         delete appData.sections[sec.id];
+                        expandedSections.delete(sec.id); // Clean up expansion state
                     });
+                    expandedNotebooks.delete(notebookIdToDelete); // Clean up expansion state
 
-                    if (currentSelectedNotebookId === notebook.id) {
+                    if (currentSelectedNotebookId === notebookIdToDelete) {
                         currentSelectedNotebookId = null;
                         currentSelectedSectionId = null;
                         currentOpenPageId = null;
@@ -188,8 +213,9 @@ function renderSidebar(searchQuery = "") {
         // Sections
         const sectionsUl = document.createElement('ul');
         sectionsUl.classList.add('section-list');
-        if (notebook.id === currentSelectedNotebookId || searchQuery) { // Show sections if notebook is active or searching
-            const sections = getSectionsByNotebookLocal(notebook.id).filter(sec =>
+        // Show sections if notebook is expanded OR if we are searching (filteredNotebooks handles this)
+        if (expandedNotebooks.has(notebook.id) || (searchQuery && filteredNotebooks.some(nb => nb.id === notebook.id))) {
+            const sectionsToDisplay = getSectionsByNotebookLocal(notebook.id).filter(sec =>
                 searchQuery ? sec.name.toLowerCase().includes(lastSearchQuery) ||
                               getPagesBySectionLocal(sec.id).some(p =>
                                   p.title.toLowerCase().includes(lastSearchQuery) ||
@@ -198,7 +224,7 @@ function renderSidebar(searchQuery = "") {
                             : true
             );
 
-            sections.sort((a, b) => a.name.localeCompare(b.name)).forEach(section => {
+            sectionsToDisplay.sort((a, b) => a.name.localeCompare(b.name)).forEach(section => {
                 const sectionLi = document.createElement('li');
                 sectionLi.classList.add('section-item');
                 if (section.id === currentSelectedSectionId) {
@@ -212,32 +238,45 @@ function renderSidebar(searchQuery = "") {
                 sectionNameSpan.classList.add('item-name');
                 sectionNameSpan.addEventListener('click', (e) => {
                     e.stopPropagation();
+                    if (expandedSections.has(section.id)) {
+                        expandedSections.delete(section.id);
+                    } else {
+                        expandedSections.add(section.id);
+                    }
                     currentSelectedSectionId = section.id;
                     currentSelectedNotebookId = notebook.id; // Ensure parent notebook is also marked active
-                    // currentOpenPageId = null; // Optionally reset page
-                    // clearEditor();
+
                     renderSidebar(lastSearchQuery);
-                     // Try to load first page or indicate to create one
-                    const pages = getPagesBySectionLocal(section.id);
-                    if (pages.length > 0) {
-                        loadPageIntoEditor(pages[0].id);
-                    } else {
-                        setEditorPlaceholder(`No pages in section "${section.name}". Click "+ New Page".`);
+
+                    // If section was expanded, and no relevant page is open, try to load first page
+                    if (expandedSections.has(section.id)) {
+                        const pages = getPagesBySectionLocal(section.id).sort((a,b) => a.title.localeCompare(b.title));
+                        if (pages.length > 0) {
+                             if (!currentOpenPageId || !appData.pages[currentOpenPageId] || appData.pages[currentOpenPageId].sectionId !== section.id) {
+                                loadPageIntoEditor(pages[0].id);
+                            }
+                        } else if (!currentOpenPageId || !appData.pages[currentOpenPageId] || appData.pages[currentOpenPageId].sectionId !== section.id) {
+                            setEditorPlaceholder(`No pages in section "${section.name}". Click "+ New Page".`);
+                        }
                     }
                 });
 
                 const sectionControls = document.createElement('div');
                 sectionControls.classList.add('item-controls');
 
-                const addPageBtn = createIconButton('+', 'Add Page', async (e) => {
+                const addPageBtn = createIconButton('&#43;', 'Add Page', async (e) => {
                     e.stopPropagation();
+                    currentSelectedSectionId = section.id; // Set context for adding page
+                    currentSelectedNotebookId = notebook.id;
+                    expandedSections.add(section.id);      // Ensure section is expanded
+                    expandedNotebooks.add(notebook.id);  // Ensure parent notebook is expanded
+
                     const pageTitle = prompt(`Enter title for new page in "${section.name}":`);
                     if (pageTitle) {
                         try {
                             const newPage = await addPage(section.id, pageTitle, "");
                             appData.pages[newPage.id] = newPage;
-                            loadPageIntoEditor(newPage.id); // Load new page
-                            renderSidebar(lastSearchQuery); // Re-render to show new page and select it
+                            loadPageIntoEditor(newPage.id); // Load new page (will also render sidebar)
                         } catch (error) {
                             console.error("Error adding page:", error);
                             alert("Failed to add page.");
@@ -245,7 +284,7 @@ function renderSidebar(searchQuery = "") {
                     }
                 });
 
-                const renameSectionBtn = createIconButton('✎', 'Rename Section', async (e) => {
+                const renameSectionBtn = createIconButton('&#9998;', 'Rename Section', async (e) => {
                     e.stopPropagation();
                     const newName = prompt("Enter new section name:", section.name);
                     if (newName && newName !== section.name) {
@@ -260,19 +299,24 @@ function renderSidebar(searchQuery = "") {
                     }
                 });
 
-                const deleteSectionBtn = createIconButton('🗑', 'Delete Section', async (e) => {
+                const deleteSectionBtn = createIconButton('&#128465;', 'Delete Section', async (e) => {
                     e.stopPropagation();
                     if (confirm(`Are you sure you want to delete section "${section.name}" and all its pages?`)) {
+                        const sectionIdToDelete = section.id;
                         try {
-                            await deleteSection(section.id);
-                            delete appData.sections[section.id];
+                            await deleteSection(sectionIdToDelete);
+                            delete appData.sections[sectionIdToDelete];
                             // Cascade delete local appData pages
-                            getPagesBySectionLocal(section.id).forEach(p => delete appData.pages[p.id]);
+                            getPagesBySectionLocal(sectionIdToDelete).forEach(p => delete appData.pages[p.id]);
+                            expandedSections.delete(sectionIdToDelete); // Clean up expansion state
 
-                            if (currentSelectedSectionId === section.id) {
+                            if (currentSelectedSectionId === sectionIdToDelete) {
                                 currentSelectedSectionId = null;
-                                currentOpenPageId = null;
-                                clearEditor();
+                                // If a page from this section was open, clear it
+                                if (currentOpenPageId && appData.pages[currentOpenPageId] && appData.pages[currentOpenPageId].sectionId === sectionIdToDelete) {
+                                    currentOpenPageId = null;
+                                    clearEditor();
+                                }
                                 setEditorPlaceholder("Select or create a page to start typing...");
                             }
                             renderSidebar(lastSearchQuery);
@@ -290,37 +334,31 @@ function renderSidebar(searchQuery = "") {
                 // Pages
                 const pagesUl = document.createElement('ul');
                 pagesUl.classList.add('page-list');
-                if (section.id === currentSelectedSectionId || searchQuery) { // Show pages if section is active or searching
-                    const pages = getPagesBySectionLocal(section.id).filter(p =>
+                // Show pages if section is expanded OR if we are searching and this section is relevant
+                if (expandedSections.has(section.id) || (searchQuery && sectionsToDisplay.some(s => s.id === section.id))) {
+                    const pagesToDisplay = getPagesBySectionLocal(section.id).filter(p =>
                         searchQuery ? p.title.toLowerCase().includes(lastSearchQuery) ||
                                       (p.content && p.content.toLowerCase().includes(lastSearchQuery))
                                     : true
                     );
 
-                    pages.sort((a, b) => a.title.localeCompare(b.title)).forEach(page => {
-                        if (searchQuery && !(page.title.toLowerCase().includes(lastSearchQuery) || (page.content && page.content.toLowerCase().includes(lastSearchQuery))) &&
-                            !section.name.toLowerCase().includes(lastSearchQuery) && !notebook.name.toLowerCase().includes(lastSearchQuery)) {
-                           // If searching and this page itself doesn't match, and its parent section/notebook also don't match the query, skip
-                           // This logic is tricky if we want to show parent if child matches. The current filter on notebooks/sections handles this.
-                        }
-
+                    pagesToDisplay.sort((a, b) => a.title.localeCompare(b.title)).forEach(page => {
                         const pageLi = document.createElement('li');
                         pageLi.classList.add('page-item');
-                        pageLi.textContent = page.title;
                         pageLi.dataset.pageId = page.id;
+
+                        const pageTitleNode = document.createTextNode(page.title); // Create text node for title
+                        pageLi.appendChild(pageTitleNode); // Append title text node
+
                         if (page.id === currentOpenPageId) {
                             pageLi.classList.add('active');
                         }
                         pageLi.addEventListener('click', (e) => {
                             e.stopPropagation();
-                            loadPageIntoEditor(page.id);
-                            currentSelectedSectionId = section.id; // Ensure parent section is active
-                            currentSelectedNotebookId = notebook.id; // Ensure parent notebook is active
-                            renderSidebar(lastSearchQuery); // Re-render to highlight
+                            loadPageIntoEditor(page.id); // This will also set currentSelected items and re-render
                         });
 
-                        // Simple delete for page directly on the page item for now
-                        const deletePageBtn = createIconButton('🗑', 'Delete Page', async (ev) => {
+                        const deletePageBtn = createIconButton('&#128465;', 'Delete Page', async (ev) => {
                             ev.stopPropagation();
                             if (confirm(`Are you sure you want to delete page "${page.title}"?`)) {
                                 try {
@@ -329,7 +367,13 @@ function renderSidebar(searchQuery = "") {
                                     if (currentOpenPageId === page.id) {
                                         clearEditor();
                                         currentOpenPageId = null;
-                                        setEditorPlaceholder("Select or create a page to start typing...");
+                                        // Try to load another page in the same section or set placeholder
+                                        const remainingPages = getPagesBySectionLocal(section.id);
+                                        if (remainingPages.length > 0) {
+                                            loadPageIntoEditor(remainingPages.sort((a,b)=>a.title.localeCompare(b.title))[0].id);
+                                        } else {
+                                            setEditorPlaceholder("Select or create a page to start typing...");
+                                        }
                                     }
                                     renderSidebar(lastSearchQuery);
                                 } catch (error) {
@@ -339,7 +383,7 @@ function renderSidebar(searchQuery = "") {
                             }
                         });
                         deletePageBtn.style.marginLeft = "5px"; // basic styling
-                        pageLi.appendChild(deletePageBtn);
+                        pageLi.appendChild(deletePageBtn); // Append delete button AFTER text node
                         pagesUl.appendChild(pageLi);
                     });
                 }
@@ -352,10 +396,10 @@ function renderSidebar(searchQuery = "") {
     });
 }
 
-function createIconButton(text, title, onClick) {
+function createIconButton(htmlContent, title, onClick) {
     const button = document.createElement('button');
     button.classList.add('icon-button');
-    button.textContent = text;
+    button.innerHTML = htmlContent; // Use innerHTML for HTML entities
     button.title = title;
     button.addEventListener('click', onClick);
     return button;
@@ -374,12 +418,13 @@ function clearEditor() {
     noteTitleInput.value = "";
     noteEditor.innerHTML = "";
     currentOpenPageId = null;
+    // Do not disable editor parts here, setEditorPlaceholder handles it
 }
 
 function setEditorPlaceholder(text) {
     noteTitleInput.value = "";
     noteEditor.innerHTML = `<p style="color: #aaa;">${text}</p>`;
-    currentOpenPageId = null;
+    currentOpenPageId = null; // Ensure no page is considered open
     noteTitleInput.disabled = true;
     noteEditor.contentEditable = "false"; // Disable editing
     saveNoteBtn.disabled = true;
@@ -394,11 +439,13 @@ async function loadPageIntoEditor(pageId) {
         noteEditor.innerHTML = page.content || "<p></p>"; // Ensure there's always a paragraph for editing
         currentOpenPageId = pageId;
 
-        // Set current notebook and section based on page
         const section = appData.sections[page.sectionId];
         if (section) {
             currentSelectedSectionId = section.id;
             currentSelectedNotebookId = section.notebookId;
+            // Ensure parents are expanded when a page is loaded
+            expandedSections.add(section.id);
+            expandedNotebooks.add(section.notebookId);
         }
 
         noteTitleInput.disabled = false;
@@ -406,7 +453,7 @@ async function loadPageIntoEditor(pageId) {
         saveNoteBtn.disabled = false;
 
         await chrome.storage.local.set({ lastOpenPageId: pageId });
-        renderSidebar(lastSearchQuery); // Re-render sidebar to reflect active items
+        renderSidebar(lastSearchQuery); // Re-render sidebar to reflect active items and expansion
         noteEditor.focus();
     } else {
         console.error("Page not found:", pageId);
@@ -428,7 +475,16 @@ saveNoteBtn.addEventListener('click', async () => {
     try {
         const updated = await updatePage(currentOpenPageId, title, content);
         appData.pages[currentOpenPageId] = { ...appData.pages[currentOpenPageId], ...updated }; // Update local state
-        renderSidebar(lastSearchQuery); // Update sidebar if title changed
+        // Check if the title in the sidebar needs updating (renderSidebar will catch it, but direct is faster for UI feel)
+        const pageLi = notebookListElement.querySelector(`.page-item[data-page-id="${currentOpenPageId}"]`);
+        if (pageLi) {
+            for (let child of pageLi.childNodes) {
+                if (child.nodeType === Node.TEXT_NODE && child.nodeValue.trim() !== title) {
+                    child.nodeValue = title;
+                    break;
+                }
+            }
+        }
         alert('Note saved!');
     } catch (error) {
         console.error("Error saving note:", error);
@@ -438,7 +494,7 @@ saveNoteBtn.addEventListener('click', async () => {
 
 const debouncedSave = debounce(async () => {
     if (currentOpenPageId && noteEditor.contentEditable === "true") {
-        console.log("Autosaving...");
+        // console.log("Autosaving...");
         const title = noteTitleInput.value.trim();
         const content = noteEditor.innerHTML;
         if (!title) return; // Don't autosave without a title
@@ -446,14 +502,11 @@ const debouncedSave = debounce(async () => {
         try {
             const updated = await updatePage(currentOpenPageId, title, content);
              appData.pages[currentOpenPageId] = { ...appData.pages[currentOpenPageId], ...updated };
-            // Potentially re-render sidebar if title change needs to be reflected immediately
-            // renderSidebar(lastSearchQuery); // This might be too much for autosave
-             // Update the title in the sidebar if it's visible and changed
+            // Update the title in the sidebar if it's visible and changed
             const pageLi = notebookListElement.querySelector(`.page-item[data-page-id="${currentOpenPageId}"]`);
-            if (pageLi && pageLi.childNodes[0].nodeValue.trim() !== title) { // Check nodeValue of text node
-                 // To avoid issues with the delete button inside, find the text node more carefully
+            if (pageLi) {
                 for (let child of pageLi.childNodes) {
-                    if (child.nodeType === Node.TEXT_NODE) {
+                    if (child.nodeType === Node.TEXT_NODE && child.nodeValue.trim() !== title) {
                         child.nodeValue = title;
                         break;
                     }
@@ -461,7 +514,6 @@ const debouncedSave = debounce(async () => {
             }
         } catch (error) {
             console.error("Error autosaving note:", error);
-            // Optionally provide unobtrusive feedback for autosave errors
         }
     }
 }, 1500);
@@ -483,6 +535,12 @@ async function initializeApp() {
         appData = data;
     }
 
+    // Optionally load persisted expansion states (if you implement saving them)
+    // const { expandedNbs, expandedSns } = await chrome.storage.local.get(['expandedNbs', 'expandedSns']);
+    // if (expandedNbs) expandedNotebooks = new Set(expandedNbs);
+    // if (expandedSns) expandedSections = new Set(expandedSns);
+
+
     const { lastOpenPageId: storedLastOpenPageId,
             lastSelectedNotebookId: storedLastSelectedNotebookId,
             lastSelectedSectionId: storedLastSelectedSectionId
@@ -491,51 +549,76 @@ async function initializeApp() {
     currentSelectedNotebookId = storedLastSelectedNotebookId;
     currentSelectedSectionId = storedLastSelectedSectionId;
 
-    renderSidebar(); // Initial render
-
+    // Initial expansion based on last state
     if (storedLastOpenPageId && appData.pages[storedLastOpenPageId]) {
-        await loadPageIntoEditor(storedLastOpenPageId);
+        const pageToLoad = appData.pages[storedLastOpenPageId];
+        const sectionOfPage = appData.sections[pageToLoad.sectionId];
+        if (sectionOfPage) {
+            expandedSections.add(sectionOfPage.id);
+            if (appData.notebooks[sectionOfPage.notebookId]) {
+                expandedNotebooks.add(sectionOfPage.notebookId);
+            }
+        }
+        await loadPageIntoEditor(storedLastOpenPageId); // This also calls renderSidebar
     } else if (currentSelectedSectionId && appData.sections[currentSelectedSectionId]) {
-        const pagesInSection = getPagesBySectionLocal(currentSelectedSectionId);
+        const sectionToSelect = appData.sections[currentSelectedSectionId];
+        expandedSections.add(sectionToSelect.id);
+        if (appData.notebooks[sectionToSelect.notebookId]) {
+            expandedNotebooks.add(sectionToSelect.notebookId);
+        }
+        const pagesInSection = getPagesBySectionLocal(currentSelectedSectionId).sort((a,b) => a.title.localeCompare(b.title));
         if (pagesInSection.length > 0) {
-            await loadPageIntoEditor(pagesInSection.sort((a,b) => a.title.localeCompare(b.title))[0].id);
+            await loadPageIntoEditor(pagesInSection[0].id);
         } else {
-            setEditorPlaceholder(`No pages in selected section. Click "+ New Page".`);
+            setEditorPlaceholder(`No pages in section "${sectionToSelect.name}". Click "+ New Page".`);
+            renderSidebar(); // Explicitly call render if no page is loaded
         }
     } else if (currentSelectedNotebookId && appData.notebooks[currentSelectedNotebookId]) {
-        const sectionsInNotebook = getSectionsByNotebookLocal(currentSelectedNotebookId);
+        const notebookToSelect = appData.notebooks[currentSelectedNotebookId];
+        expandedNotebooks.add(notebookToSelect.id);
+        const sectionsInNotebook = getSectionsByNotebookLocal(currentSelectedNotebookId).sort((a,b) => a.name.localeCompare(b.name));
         if (sectionsInNotebook.length > 0) {
-            const firstSection = sectionsInNotebook.sort((a,b) => a.name.localeCompare(b.name))[0];
-            currentSelectedSectionId = firstSection.id; // Select this section
-            const pagesInFirstSection = getPagesBySectionLocal(firstSection.id);
+            const firstSection = sectionsInNotebook[0];
+            currentSelectedSectionId = firstSection.id; // Also select the first section
+            expandedSections.add(firstSection.id); // And expand it
+            const pagesInFirstSection = getPagesBySectionLocal(firstSection.id).sort((a,b) => a.title.localeCompare(b.title));
             if (pagesInFirstSection.length > 0) {
-                await loadPageIntoEditor(pagesInFirstSection.sort((a,b) => a.title.localeCompare(b.title))[0].id);
+                await loadPageIntoEditor(pagesInFirstSection[0].id);
             } else {
                  setEditorPlaceholder(`No pages in section "${firstSection.name}". Click "+ New Page".`);
+                 renderSidebar();
             }
         } else {
-            setEditorPlaceholder(`No sections in selected notebook. Click "+ New Section".`);
+            setEditorPlaceholder(`No sections in notebook "${notebookToSelect.name}". Click "+ New Section".`);
+            renderSidebar();
         }
     } else if (Object.keys(appData.notebooks).length > 0) {
-        // Fallback: Load first page of first section of first notebook
+        // Fallback: Load first page of first section of first notebook, and expand them
         const firstNotebook = Object.values(appData.notebooks).sort((a,b) => a.name.localeCompare(b.name))[0];
         if (firstNotebook) {
             currentSelectedNotebookId = firstNotebook.id;
+            expandedNotebooks.add(firstNotebook.id);
             const sections = getSectionsByNotebookLocal(firstNotebook.id).sort((a,b) => a.name.localeCompare(b.name));
             if (sections.length > 0) {
                 currentSelectedSectionId = sections[0].id;
+                expandedSections.add(sections[0].id);
                 const pages = getPagesBySectionLocal(sections[0].id).sort((a,b) => a.title.localeCompare(b.title));
                 if (pages.length > 0) {
                     await loadPageIntoEditor(pages[0].id);
                 } else {
                     setEditorPlaceholder(`No pages in section "${sections[0].name}". Click "+ New Page".`);
+                    renderSidebar();
                 }
             } else {
                  setEditorPlaceholder(`No sections in notebook "${firstNotebook.name}". Click "+ New Section".`);
+                 renderSidebar();
             }
+        } else {
+             renderSidebar(); // Should not happen if notebooks exist, but good fallback
         }
     } else {
         setEditorPlaceholder("Create a notebook and page to get started!");
+        renderSidebar(); // Initial render for empty state
     }
 
 
@@ -546,19 +629,48 @@ async function initializeApp() {
             if (freshData) {
                 appData = freshData;
             }
+
+            // Validate and clean up expansion sets based on fresh data
+            const validExpandedNotebooks = new Set();
+            expandedNotebooks.forEach(id => { if (appData.notebooks[id]) validExpandedNotebooks.add(id); });
+            expandedNotebooks = validExpandedNotebooks;
+
+            const validExpandedSections = new Set();
+            expandedSections.forEach(id => { if (appData.sections[id]) validExpandedSections.add(id); });
+            expandedSections = validExpandedSections;
+
             // Decide if current page still exists and reload or clear
             if (currentOpenPageId && !appData.pages[currentOpenPageId]) {
                 currentOpenPageId = null;
-                clearEditor();
-                setEditorPlaceholder("The previously open page was removed or changed.");
-            } else if (currentOpenPageId) {
-                // Re-load content of current page in case it changed
+                clearEditor(); // Clear content
+                setEditorPlaceholder("The previously open page was removed or changed."); // Set placeholder
+            } else if (currentOpenPageId && appData.pages[currentOpenPageId]) { // Page still exists
+                // Re-load content of current page in case it changed from sync
                 const page = appData.pages[currentOpenPageId];
-                if (page) {
-                    noteTitleInput.value = page.title;
-                    noteEditor.innerHTML = page.content || "<p></p>";
-                }
+                noteTitleInput.value = page.title;
+                noteEditor.innerHTML = page.content || "<p></p>";
+                 // Ensure editor is enabled if a page is loaded
+                noteTitleInput.disabled = false;
+                noteEditor.contentEditable = "true";
+                saveNoteBtn.disabled = false;
+            } else if (!currentOpenPageId) { // No page was open, or it got deleted.
+                 // If editor was showing a specific placeholder due to deletion, it's already set.
+                 // Otherwise, ensure a generic placeholder if appropriate.
+                 // The logic in initializeApp will try to load a default page if possible based on selections.
+                 // For now, just ensure the sidebar is correct. If nothing is loadable, it'll show its placeholder.
             }
+
+            // If current selected notebook/section was deleted, clear selection
+            if (currentSelectedNotebookId && !appData.notebooks[currentSelectedNotebookId]) {
+                currentSelectedNotebookId = null;
+            }
+            if (currentSelectedSectionId && !appData.sections[currentSelectedSectionId]) {
+                currentSelectedSectionId = null;
+                 // if the section of the current open page was deleted, the page itself would be gone or reparented (not handled here)
+                 // but if currentOpenPageId's section is now invalid, it would have been caught above.
+            }
+
+
             renderSidebar(lastSearchQuery); // Re-render the sidebar with new data
             sendResponse({status: "Popup updated"});
         }
@@ -574,6 +686,7 @@ addNotebookBtn.addEventListener('click', async () => {
             appData.notebooks[newNotebook.id] = newNotebook;
             currentSelectedNotebookId = newNotebook.id; // Select the new notebook
             currentSelectedSectionId = null; // No section selected yet in new notebook
+            expandedNotebooks.add(newNotebook.id); // Expand the new notebook
             clearEditor();
             setEditorPlaceholder(`Notebook "${newNotebook.name}" created. Add a section and page.`);
             renderSidebar(lastSearchQuery);
@@ -594,7 +707,6 @@ function debounce(func, delay) {
 }
 
 // Save last selection state when popup is about to close
-// 'visibilitychange' is more reliable for popups than 'unload'
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
         if (currentOpenPageId) {
@@ -606,6 +718,12 @@ document.addEventListener('visibilitychange', () => {
         if (currentSelectedSectionId) {
             chrome.storage.local.set({ lastSelectedSectionId: currentSelectedSectionId });
         }
+        // Optionally persist expansion states:
+        // chrome.storage.local.set({
+        //     expandedNbs: Array.from(expandedNotebooks),
+        //     expandedSns: Array.from(expandedSections)
+        // });
+
          // Autosave one last time if content is dirty
         if (currentOpenPageId && noteEditor.contentEditable === "true") {
             const title = noteTitleInput.value.trim();
