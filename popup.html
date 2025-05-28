@@ -1,44 +1,55 @@
 <!DOCTYPE html>
 <html>
-
 <head>
-    <title>My Notes</title>
+    <title>My Notes (OneNote Style)</title>
     <link rel="stylesheet" href="css/popup.css">
 </head>
-
 <body>
     <div class="container">
-        <header>
-            <h1>My Notes</h1>
-            <button id="toggle-dark-mode">Toggle Dark Mode</button>
-            <input type="text" id="search-input" placeholder="Search notes...">
+        <header class="app-header">
+            <div class="header-left">
+                <button id="app-menu-btn" title="App Menu (e.g., Search)">&#128269;</button> </div>
+            <h1 id="main-app-title">Notesy</h1>
+            <div class="header-right">
+                <button id="toggle-dark-mode" title="Toggle Dark Mode">&#9728;</button> </div>
         </header>
+        <input type="text" id="search-input-main" placeholder="Search all notes...">
 
         <div class="main-content">
-            <aside class="sidebar" id="sidebar">
-                <h2>Notebooks</h2>
-                <ul id="notebook-list">
-                </ul>
-                <button id="add-notebook-btn">+ New Notebook</button>
+            <aside class="sidebar-column" id="sidebar-column">
+                <div class="column-header">
+                    <button id="sidebar-back-btn" class="icon-btn" title="Back" style="display: none;">&#8592;</button> <h2 id="sidebar-column-header-title">Notebooks</h2>
+                </div>
+                <ul id="sidebar-column-list" class="onenote-list">
+                    </ul>
+                <button id="add-item-sidebar-column-btn" class="add-button">
+                    <span class="add-icon">&#43;</span> Add Notebook
+                </button>
             </aside>
 
-            <main class="editor-area">
+            <section class="pages-column" id="pages-column">
+                <div class="column-header">
+                    <h2 id="pages-column-header-title">Pages</h2>
+                </div>
+                <ul id="pages-column-list" class="onenote-list">
+                    </ul>
+                <button id="add-page-column-btn" class="add-button">
+                    <span class="add-icon">&#43;</span> Add Page
+                </button>
+            </section>
+
+            <main class="editor-column" id="editor-column">
                 <div class="editor-toolbar">
                     <button data-command="bold"><b>B</b></button>
                     <button data-command="italic"><i>I</i></button>
                     <button data-command="insertUnorderedList">UL</button>
-                </div>
+                    </div>
+                <input type="text" id="note-title-input" placeholder="Page Title">
                 <div id="note-editor" contenteditable="true" class="note-content">
                     <p>Select or create a page to start typing...</p>
                 </div>
-                <input type="text" id="note-title-input" placeholder="Note Title">
-                <button id="save-note-btn">Save Note</button>
-            </main>
+                <button id="save-note-btn">Save Note</button> </main>
         </div>
     </div>
-    <script src="js/storage.js"></script>
-    <script src="js/popup.js"></script>
-    
-</body>
-
+    </body>
 </html>
