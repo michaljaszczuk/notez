@@ -148,11 +148,11 @@ async function updatePage(pageId, title, content) {
   if (!data.pages[pageId]) {
     // This was the previous behavior. Depending on UX, might want to create it
     // or ensure it's always created before calling update.
-    console.warn(`Page ${pageId} not found for update. It will not be created.`);
+    // console.warn(`Page ${pageId} not found for update. It will not be created.`);
     throw new Error("Page not found for update. Cannot update non-existent page.");
   }
   data.pages[pageId] = {
-    ...data.pages[pageId],
+    ...data.pages[pageId], // Preserve other properties like createdAt, sectionId
     title,
     content,
     updatedAt: Date.now(),
